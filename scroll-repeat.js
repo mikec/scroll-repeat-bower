@@ -188,13 +188,16 @@ function($window, $timeout) {
                     phTopHeight =
                         ((numTopElems - numHiddenTop) / numColumns) * itemHeight;
 
-                    var extraPh = numColumns - (numItems % numColumns);
                     var bottomPhRows = numRows - (scope.ofs / numColumns);
-                    var numVisiblebottom = (bottomPhRows * numColumns) + extraPh;
-                    var numHiddenBottom = phElementsBottom.length - numVisiblebottom;
-                    if(numHiddenBottom < 0) numHiddenBottom = 0;
-                    if(numHiddenBottom > phElementsBottom.length) {
-                        numHiddenBottom = phElementsBottom.length;
+                    var numHiddenBottom = phElementsBottom.length;
+                    if(bottomPhRows > 0) {
+                        var extraItms = numItems % numColumns;
+                        var numVisibleBottom = bottomPhRows * numColumns + extraItms;
+                        numHiddenBottom = phElementsBottom.length - numVisibleBottom;
+                        if(numHiddenBottom < 0) numHiddenBottom = extraItms;
+                        if(numHiddenBottom > phElementsBottom.length) {
+                            numHiddenBottom = phElementsBottom.length;
+                        }
                     }
                     var bottomDiff = numHiddenBottom - phHiddenBottom;
                     if(bottomDiff !== 0) {

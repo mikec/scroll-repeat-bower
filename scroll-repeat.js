@@ -15,6 +15,10 @@ function($window, $timeout) {
     var numColumns = 1;
     var numBufferItems;
 
+    var phCreationChunkSize = 250;
+    var phCreationInterval = 200;
+    var phMaxAllowed = 5000;
+
     var w = angular.element($window);
     var body = angular.element($window.document.body);
 
@@ -26,6 +30,8 @@ function($window, $timeout) {
     var wScrollTop = 0;
     var scrollDebounce;
     var scrollDebounceTime = 500;
+    var scrollEnd;
+    var scrollEndTime = 200;
     var scrollHandler;
 
     updateWindowSizes();
@@ -45,27 +51,40 @@ function($window, $timeout) {
         wScrollTop = $window.document.body.scrollTop;
         if(angular.isUndefined(scrollDebounce)) {
             scrollDebounce = $timeout(function() {
-                if(scrollHandler) scrollHandler();
+                if(scrollHandler) scrollHandler('debounced');
                 scrollDebounce = undefined;
             }, scrollDebounceTime);
         }
-        if(scrollHandler) scrollHandler(true);
+        $timeout.cancel(scrollEnd);
+        scrollEnd = $timeout(function() {
+            scrollHandler('ended');
+        }, scrollEndTime);
+        if(scrollHandler) scrollHandler();
     });
 
     function updateWindowSizes() {
+        var wChanged = $window.innerWidth !== wWidth;
+        var hChanged = $window.innerHeight !== wHeight;
         wWidth = $window.innerWidth;
         wHeight = $window.innerHeight;
         resizeDebounce = undefined;
-        if(resizeHandler) resizeHandler();
+        if(resizeHandler) {
+            resizeHandler({
+                widthChanged: wChanged,
+                heightChanged: hChanged
+            });
+        }
     }
 
     return {
         compile: function(tElement, tAttrs) {
-            var item = angular.element('<div class="scroll-repeat-item"></div>');
-
+            var itemTmpl = '<div class="scroll-repeat-item"></div>';
+            var phTmpl = '<div class="scroll-repeat-item scroll-repeat-item-placeholder"></div>';
+            var contentTmpl = '<div class="scroll-repeat-item-content"></div>';
             var expression = tAttrs.scrollRepeat;
 
-            var content = angular.element('<div class="scroll-repeat-item-content"></div>');
+            var item = angular.element(itemTmpl);
+            var content = angular.element(contentTmpl);
             content.append(tElement.contents());
             item.append(content);
 
@@ -83,45 +102,146 @@ function($window, $timeout) {
                 var cursor = 0;
                 var itemHeight = 0;
                 var numItems = 0;
+                var numRows = 0;
                 var baseOffsetPx = 0;
+                var baseOffsetAmt = 0;
+                var bodyHeight = 0;
 
                 var topItemOffset, bottomItemOffset;
+
+                var phCreateStarted = false;
+                var phElementsTop = [];
+                var phElementsBottom = [];
+                var phDisplayVal;
+                var phHiddenTop = 0;
+                var phHiddenBottom = 0;
+                var phTopHeight = 0;
 
                 scope.scrollRepeatClippingTop = false;
                 scope.scrollRepeatClippingBottom = false;
 
-                setCursor(0);
+                updateCursor();
 
                 scope.$watchCollection(rhs, function(itemArray) {
                     if(itemArray) {
                         numItems = itemArray.length;
                     }
                     $timeout(function() {
-                        updateItemRendering();
+                        recalcUI();
+                        if(numItems > 0 && !phCreateStarted) {
+                            createPlaceholders();
+                        }
                     });
                 });
 
-                scrollHandler = function(bounced) {
-                    if(!bounced) {
+                scrollHandler = function(scrollState) {
+                    if(scrollState == 'debounced' &&
+                        !scope.scrollRepeatClippingTop &&
+                        !scope.scrollRepeatClippingBottom)
+                    {
+                        updateCursor();
+                    } else if (scrollState == 'ended') {
                         updateCursor();
                     }
                     updateClipping();
                 };
 
-                resizeHandler = function() {
-                    updateItemRendering();
+                resizeHandler = function(event) {
+                    if(event.widthChanged) {
+                        recalcUI();
+                    }
                 };
+
+                function updatePlaceholderDisplays() {
+                    var numTopElems = phElementsTop.length;
+                    var mod = numTopElems % numColumns;
+                    var numHiddenTop = numTopElems - cursor;
+                    if(numHiddenTop < mod) numHiddenTop = mod;
+                    var topDiff = numHiddenTop - phHiddenTop;
+                    if(topDiff !== 0) {
+                        updatePhElementDisplay(phElementsTop,
+                                phHiddenTop, topDiff, phDisplayVal);
+                        phHiddenTop = numHiddenTop;
+                    }
+                    phTopHeight =
+                        ((numTopElems - numHiddenTop) / numColumns) * itemHeight;
+
+                    var extraPh = numColumns - (numItems % numColumns);
+                    var bottomPhRows = numRows - (scope.ofs / numColumns);
+                    var numVisiblebottom = (bottomPhRows * numColumns) + extraPh;
+                    var numHiddenBottom = phElementsBottom.length - numVisiblebottom;
+                    if(numHiddenBottom < 0) numHiddenBottom = 0;
+                    if(numHiddenBottom > phElementsBottom.length) {
+                        numHiddenBottom = phElementsBottom.length;
+                    }
+                    var bottomDiff = numHiddenBottom - phHiddenBottom;
+                    if(bottomDiff !== 0) {
+                        updatePhElementDisplay(phElementsBottom,
+                                phHiddenBottom, bottomDiff, phDisplayVal, true);
+                        phHiddenBottom = numHiddenBottom;
+                    }
+                }
+
+                function updatePhElementDisplay(elements, prev, diff, displayVal, TST) {
+                    if(diff > 0) {
+                        for(var i = prev; i < prev + diff; i++) {
+                            elements[i].css('display', 'none');
+                        }
+                    } else if(diff < 0) {
+                        for(var j = prev - 1; j >= prev + diff; j--) {
+                            elements[j].css('display', displayVal);
+                        }
+                    }
+                }
+
+                function createPlaceholders() {
+                    phCreateStarted = true;
+                    for(var i=0; i < phCreationChunkSize; i++) {
+                        var phElemTop = createPlaceholder();
+                        phElementsTop.push(phElemTop);
+                        element.prepend(phElemTop);
+                    }
+                    for(var j=0; j < phCreationChunkSize; j++) {
+                        var phElemBottom = createPlaceholder();
+                        phElementsBottom.push(phElemBottom);
+                        element.append(phElemBottom);
+                    }
+                    if(angular.isUndefined(phDisplayVal)) {
+                        phDisplayVal = phElementsTop[0].css('display');
+                    }
+
+                    updateOffset();
+
+                    if(phElementsTop.length < phMaxAllowed) {
+                        $timeout(createPlaceholders, phCreationInterval);
+                    }
+                }
+
+                function updateOffset() {
+                    updatePlaceholderDisplays();
+                    topItemOffset = Math.floor(cursor / numColumns) * itemHeight - phTopHeight;
+                    var numRows = Math.ceil(numAllowedItems / numColumns);
+                    bottomItemOffset = topItemOffset + (numRows * itemHeight);
+                    setTranslateY(topItemOffset);
+                }
 
                 function setCursor(n) {
                     cursor = n;
-                    var ofsBase = numAllowedItems < numItems ?
-                                    numAllowedItems : numItems;
-                    var ofs = ofsBase + n;
-                    var lim = ofsBase * -1;
-                    if(ofs === 0) ofs = numAllowedItems;
-                    if(lim === 0) lim = numAllowedItems * -1;
-                    scope.ofs = ofs;
-                    scope.lim = lim;
+
+                    if(numItems > 0) {
+                        var ofs = baseOffsetAmt + n;
+                        var lim = baseOffsetAmt;
+                        if(cursor + lim > numItems) {
+                            var dif = cursor + lim - numItems;
+                            lim -= dif;
+                        }
+                        scope.ofs = ofs;
+                        scope.lim = lim * -1;
+                    } else {
+                        scope.ofs = numAllowedItems;
+                        scope.lim = numAllowedItems * -1;
+                    }
+
                     updateOffset();
                 }
 
@@ -133,9 +253,12 @@ function($window, $timeout) {
                         c = (Math.round(adjustedScrollTop / itemHeight) * numColumns) - numBufferItems;
                         if(c < 0) c = 0;
                     }
-                    var maxC = numItems - numAllowedItems;
+
+                    var m = numItems % numColumns;
+                    var maxC = (numRows * numColumns) - baseOffsetAmt;
                     if(maxC < 0) maxC = 0;
                     if(c > maxC) c = maxC;
+
                     setCursor(c);
                 }
 
@@ -157,20 +280,12 @@ function($window, $timeout) {
                 }
 
                 function updateBodyHeight() {
-                    body.css('height', ((numItems / numColumns) * itemHeight) + 'px');
+                    bodyHeight = numRows * itemHeight;
+                    body.css('height', bodyHeight + 'px');
                 }
 
-                function updateOffset() {
-                    topItemOffset = getTopSpacerHeight();
-                    var numRows = Math.ceil(numAllowedItems / numColumns);
-                    bottomItemOffset = topItemOffset + (numRows * itemHeight);
-                    setTranslateY(topItemOffset);
-                }
-
-                function updateItemRendering() {
-                    itemHeight = getItemHeight();
-                    numColumns = getNumColumns();
-                    baseOffsetPx = getBaseOffsetPx();
+                function recalcUI() {
+                    setCalcProps();
 
                     if(itemHeight === 0) {
                         numAllowedItems = bufferAmt;
@@ -180,16 +295,34 @@ function($window, $timeout) {
                         numAllowedItems = numItemsOnScreen + (numItemsOnScreen * bufferAmt);
                         if(numAllowedItems > maxAllowedItems) numAllowedItems = maxAllowedItems;
                         numBufferItems = Math.round((numAllowedItems - numItemsOnScreen) / 2);
+                        numBufferItems = numBufferItems - (numBufferItems % numColumns);
                     }
+
+                    var m = numItems % numColumns;
+                    numRows = (m === 0 ? numItems : numItems + (numColumns - m)) / numColumns;
+
+                    var ofsAmt = numAllowedItems < numItems ?
+                                    numAllowedItems : numItems;
+                    baseOffsetAmt = ofsAmt - (ofsAmt % numColumns);
+
                     updateCursor();
                     updateBodyHeight();
+                }
+
+                function setCalcProps() {
+                    itemHeight = getItemHeight();
+                    numColumns = getNumColumns();
+                    baseOffsetPx = getBaseOffsetPx();
                 }
 
                 function getNumColumns() {
                     var n = 1;
                     var itmElems = element.children();
                     var iOfs;
-                    for(var i in itmElems) {
+                    var colCount = 0;
+                    var firstVisible = phHiddenTop;
+                    var lastVisible = phHiddenTop + numItems;
+                    for(var i = firstVisible; i <= lastVisible; i++) {
                         var outerElem = itmElems[i];
                         if(!outerElem || typeof outerElem !== 'object') break;
                         else {
@@ -199,10 +332,11 @@ function($window, $timeout) {
                                     iOfs = ofs;
                                 }
                                 if(ofs == iOfs) {
-                                    n = parseInt(i) + 1;
+                                    n = colCount + 1;
                                 } else {
                                     break;
                                 }
+                                colCount++;
                             }
                         }
                     }
@@ -214,7 +348,8 @@ function($window, $timeout) {
                 }
 
                 function getItemHeight() {
-                    return getCalculatedProperty(element.children()[0], 'offsetHeight');
+                    return getCalculatedProperty(
+                            element.children()[phElementsTop.length], 'offsetHeight');
                 }
 
                 function getCalculatedProperty(outerElem, prop) {
@@ -230,15 +365,17 @@ function($window, $timeout) {
                     return p;
                 }
 
-                function getTopSpacerHeight() {
-                    return Math.floor(cursor / numColumns) * itemHeight;
-                }
-
                 function setTranslateY(amt) {
                     var t = 'translateY(' + amt + 'px)';
                     element.css('transform', t);
                     element.css('webkitTransform', t);
                     element.css('mozTransform', t);
+                }
+
+                function createPlaceholder() {
+                    var itm = angular.element(phTmpl);
+                    itm.append(angular.element(contentTmpl));
+                    return itm;
                 }
 
             };

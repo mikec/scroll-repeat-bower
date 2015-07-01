@@ -6,8 +6,8 @@
  *
  */
 
-angular.module('litl', []).directive('scrollRepeat', ['$window', '$timeout',
-function($window, $timeout) {
+angular.module('litl.scrollRepeat', []).directive('scrollRepeat',
+['$window', '$timeout', function($window, $timeout) {
 
     var bufferAmt = 30;
     var maxAllowedItems = 500;
@@ -15,9 +15,9 @@ function($window, $timeout) {
     var numColumns = 1;
     var numBufferItems;
 
-    var phCreationChunkSize = 250;
-    var phCreationInterval = 200;
-    var phMaxAllowed = 5000;
+    var phCreationChunkSize = 50;
+    var phCreationInterval = 100;
+    var phMaxAllowed = 250;
 
     var w = angular.element($window);
     var body = angular.element($window.document.body);
@@ -29,7 +29,7 @@ function($window, $timeout) {
 
     var wScrollTop = 0;
     var scrollDebounce;
-    var scrollDebounceTime = 500;
+    var scrollDebounceTime = 50;
     var scrollEnd;
     var scrollEndTime = 200;
     var scrollHandler;
@@ -120,11 +120,13 @@ function($window, $timeout) {
 
                 var cursor = 0;
                 var itemHeight = 0;
+                var itemWidth = 0;
                 var numItems = 0;
                 var numRows = 0;
                 var baseOffsetPx = 0;
                 var baseOffsetAmt = 0;
                 var bodyHeight = 0;
+                var offset = 0;
 
                 var topItemOffset, bottomItemOffset;
 
@@ -157,12 +159,8 @@ function($window, $timeout) {
                 });
 
                 scrollHandler = function(scrollState) {
-                    if(scrollState == 'debounced' &&
-                        !scope.scrollRepeatClippingTop &&
-                        !scope.scrollRepeatClippingBottom)
+                    if(scrollState == 'debounced' || scrollState == 'ended')
                     {
-                        updateCursor();
-                    } else if (scrollState == 'ended') {
                         updateCursor();
                     }
                     updateClipping();
@@ -188,7 +186,7 @@ function($window, $timeout) {
                     phTopHeight =
                         ((numTopElems - numHiddenTop) / numColumns) * itemHeight;
 
-                    var bottomPhRows = numRows - (scope.ofs / numColumns);
+                    var bottomPhRows = numRows - (offset / numColumns);
                     var numHiddenBottom = phElementsBottom.length;
                     if(bottomPhRows > 0) {
                         var extraItms = numItems % numColumns;
@@ -245,7 +243,6 @@ function($window, $timeout) {
                 function updateOffset() {
                     updatePlaceholderDisplays();
                     topItemOffset = Math.floor(cursor / numColumns) * itemHeight - phTopHeight;
-                    var numRows = Math.ceil(numAllowedItems / numColumns);
                     bottomItemOffset = topItemOffset + (numRows * itemHeight);
                     setTranslateY(topItemOffset);
                 }
@@ -254,16 +251,16 @@ function($window, $timeout) {
                     cursor = n;
 
                     if(numItems > 0) {
-                        var ofs = baseOffsetAmt + n;
+                        offset = baseOffsetAmt + n;
                         var lim = baseOffsetAmt;
                         if(cursor + lim > numItems) {
                             var dif = cursor + lim - numItems;
                             lim -= dif;
                         }
-                        scope.ofs = ofs;
+                        scope.ofs = offset;
                         scope.lim = lim * -1;
                     } else {
-                        scope.ofs = numAllowedItems;
+                        scope.ofs = offset = numAllowedItems;
                         scope.lim = numAllowedItems * -1;
                     }
 
@@ -338,36 +335,13 @@ function($window, $timeout) {
 
                 function setCalcProps() {
                     itemHeight = getItemHeight();
+                    itemWidth = getItemWidth();
                     numColumns = getNumColumns();
                     baseOffsetPx = getBaseOffsetPx();
                 }
 
                 function getNumColumns() {
-                    var n = 1;
-                    var itmElems = element.children();
-                    var iOfs;
-                    var colCount = 0;
-                    var firstVisible = phHiddenTop;
-                    var lastVisible = phHiddenTop + numItems;
-                    for(var i = firstVisible; i <= lastVisible; i++) {
-                        var outerElem = itmElems[i];
-                        if(!outerElem || typeof outerElem !== 'object') break;
-                        else {
-                            var ofs = getCalculatedProperty(outerElem, 'offsetTop');
-                            if(ofs >= 0) {
-                                if(angular.isUndefined(iOfs)) {
-                                    iOfs = ofs;
-                                }
-                                if(ofs == iOfs) {
-                                    n = colCount + 1;
-                                } else {
-                                    break;
-                                }
-                                colCount++;
-                            }
-                        }
-                    }
-                    return n;
+                    return Math.floor(wWidth / itemWidth);
                 }
 
                 function getBaseOffsetPx() {
@@ -377,6 +351,11 @@ function($window, $timeout) {
                 function getItemHeight() {
                     return getCalculatedProperty(
                             element.children()[phElementsTop.length], 'offsetHeight');
+                }
+
+                function getItemWidth() {
+                    return getCalculatedProperty(
+                            element.children()[phElementsTop.length], 'offsetWidth');
                 }
 
                 function getCalculatedProperty(outerElem, prop) {
